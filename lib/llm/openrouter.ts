@@ -27,7 +27,7 @@ export async function chat(
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY not set");
 
-  const model = opts.model ?? process.env.OPENROUTER_MODEL ?? "google/gemini-2.0-flash-exp:free";
+  const model = opts.model ?? process.env.OPENROUTER_MODEL ?? "minimax/minimax-m2.5:free";
 
   const res = await fetch(OPENROUTER_URL, {
     method: "POST",
@@ -59,8 +59,15 @@ export async function chatJSON<T>(
   messages: ChatMessage[],
   opts: ChatOptions = {},
 ): Promise<T> {
-  const raw = await chat(messages, { ...opts, response_format: { type: "json_object" } });
-  // Some free models still return code-fenced JSON — strip if present.
-  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  // Many free models silently fail or return empty content when asked for `response_format: json_object`.
+  // Caller can still opt in via opts.response_format. Default: rely on prompt + fence-stripping.
+  const raw = await chat(messages, opts);
+
+  // Strip code fences if present, then extract the first {...} block.
+  let cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim();
+  if (!cleaned.startsWith("{")) {
+    const m = cleaned.match(/\{[\s\S]*\}/);
+    if (m) cleaned = m[0];
+  }
   return JSON.parse(cleaned) as T;
 }
