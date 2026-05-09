@@ -6,36 +6,77 @@
 
 import { getRun, subscribe } from "@/lib/run-store";
 
-export async function GET(_req: Request, ctx: RouteContext<"/api/run/[id]/stream">) {
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+export async function GET(req: Request, ctx: RouteContext<"/api/run/[id]/stream">) {
   const { id } = await ctx.params;
   const run = getRun(id);
   if (!run) return new Response("not_found", { status: 404 });
 
   const encoder = new TextEncoder();
 
+  let unsubscribe: (() => void) | null = null;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let closed = false;
+
   const stream = new ReadableStream({
     start(controller) {
-      const send = (data: unknown) => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+      const safeEnqueue = (chunk: Uint8Array) => {
+        if (closed) return;
+        try {
+          controller.enqueue(chunk);
+        } catch {
+          // Controller already closed (client disconnected). Tear down.
+          teardown();
+        }
       };
+
+      const send = (data: unknown) => {
+        safeEnqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+      };
+
+      const teardown = () => {
+        if (closed) return;
+        closed = true;
+        if (unsubscribe) unsubscribe();
+        if (heartbeat) clearInterval(heartbeat);
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+      };
+
+      // Heartbeat keeps proxies from idling out the connection.
+      heartbeat = setInterval(() => {
+        safeEnqueue(encoder.encode(`: heartbeat\n\n`));
+      }, 15_000);
 
       // Replay history.
       for (const e of run.events) send(e);
 
       // If the run already finished, close.
       if (run.status === "done" || run.status === "error") {
-        controller.close();
+        teardown();
         return;
       }
 
       // Subscribe to future events.
-      const unsubscribe = subscribe(run, (e) => {
+      unsubscribe = subscribe(run, (e) => {
         send(e);
         if (e.type === "status" && (e.status === "done" || e.status === "error")) {
-          unsubscribe();
-          controller.close();
+          teardown();
         }
       });
+
+      // Client disconnect.
+      req.signal.addEventListener("abort", teardown);
+    },
+    cancel() {
+      closed = true;
+      if (unsubscribe) unsubscribe();
+      if (heartbeat) clearInterval(heartbeat);
     },
   });
 
