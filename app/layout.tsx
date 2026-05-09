@@ -13,9 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Vibe — Launch Forecasting Simulator",
-  description:
-    "We simulated the internet reacting to your startup. Paste a landing page, watch the discourse unfold.",
+  title: "Vibe App Launch Simulator",
+  description: "Simulate the internet reacting to your launch.",
 };
 
 export default function RootLayout({
@@ -28,9 +27,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-[var(--bg-0)] text-[var(--ink-0)]">
-        {children}
-      </body>
+      <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
 }

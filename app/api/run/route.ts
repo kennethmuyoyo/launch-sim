@@ -9,6 +9,9 @@ import { runSimulation } from "@/lib/agents";
 import { scrapeProductCard } from "@/lib/scrape";
 import { createRun, emit } from "@/lib/run-store";
 
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
 export async function POST(req: Request) {
   let url: string;
   try {
@@ -28,9 +31,11 @@ export async function POST(req: Request) {
       const product = await scrapeProductCard(url);
       emit(run, { type: "product_card", product });
 
-      emit(run, { type: "status", status: "generating_personas" });
-      // simulating + persona events are emitted by runSimulation through onEvent
-      const forecast = await runSimulation(product, (e) => emit(run, e));
+      // runSimulation emits its own status events
+      // (generating_personas → personas → simulating → reactions → aggregating).
+      // It does NOT emit `forecast` or `done` — that boundary lives here so there's
+      // exactly one source of truth for terminal events.
+      const forecast = await runSimulation(product, (e) => emit(run, e), { runId: run.id });
 
       emit(run, { type: "forecast", forecast });
       emit(run, { type: "status", status: "done" });
