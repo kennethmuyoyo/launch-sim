@@ -30,7 +30,6 @@ if (existsSync(envPath)) {
 
 import type { ProductCard } from "../lib/shared/types";
 import { scrapeProductCard } from "../lib/scrape";
-import { closeBrowser } from "../lib/scrape/playwright";
 
 const DEFAULT_URLS = [
   "https://lovable.dev",
@@ -125,8 +124,6 @@ async function main() {
     }
   }
 
-  await closeBrowser();
-
   console.log("\n=== summary ===");
   for (const r of results) {
     const status = r.ok ? "OK " : "ERR";
@@ -138,5 +135,5 @@ async function main() {
 
 main().catch((err) => {
   console.error(err);
-  void closeBrowser().finally(() => process.exit(1));
+  process.exit(1);
 });
