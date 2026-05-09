@@ -1,172 +1,213 @@
 ---
 name: vibe-app-launch-simulator
-overview: A multi-agent simulator that takes a vibe-coded app's URL (plus optional pitch), auto-generates product-aware personas, runs a live swarm simulation of how those personas would discover, browse, react to, and discuss the app on a Product Hunt / Twitter-style feed, and outputs both a real-time visualization and a forecast analytics dashboard.
+overview: A Next.js / TypeScript app that takes a landing-page URL, scrapes positioning + visuals + tone into a structured ProductCard, spawns LLM personas of internet archetypes (Reddit indie hacker, TikTok productivity creator, VC Twitter guy, skeptical dev), simulates multi-round discourse where agents react to the page AND each other, and outputs a fake Reddit thread, fake Twitter discourse, fake TikTok comments, plus a launch forecast (score, virality, biggest weakness, biggest viral hook). Pitched as "we simulated the internet reacting to your launch" — the output is shareable narrative analysis, not a numerical prediction.
 todos:
-  - id: scout
-    content: "Build scout agent: Playwright + multimodal LLM extraction into ProductCard JSON"
+  - id: shared-types
+    content: "Shared integration types (ProductCard, Persona, Reaction, Forecast, RunEvent) — DONE in lib/shared/types.ts"
+    status: completed
+  - id: scaffold
+    content: "Next.js 16 + TS + Tailwind scaffold, OpenRouter client, in-memory run store, SSE stream route — DONE"
+    status: completed
+  - id: scrape-playwright
+    content: "[Ken] Implement lib/scrape/playwright.ts: capturePage(url) -> PageCapture (text, screenshot base64, nav links, og metadata)"
     status: pending
-  - id: personas
-    content: Build persona generator that produces stratified personas from a ProductCard
+  - id: scrape-extract
+    content: "[Ken] Implement lib/scrape/extract.ts: PageCapture -> ProductCard via OpenRouter, validated with ProductCardSchema"
     status: pending
-  - id: sim
-    content: Build tick-based simulation engine with discovery, browse (subset), react, diffuse phases and WebSocket streaming
+  - id: scrape-test
+    content: "[Ken] Manually test POST /api/scrape with 3 URLs (good / confusing / polarizing landing pages); confirm ProductCard fields populate sensibly"
     status: pending
-  - id: browse
-    content: Wire browser-use sessions for ~5-10% of personas to ground reactions in real interactions
+  - id: agents-personas
+    content: "[John] Implement lib/agents/personas.ts: stratified persona generation from ProductCard + ARCHETYPES (single batched LLM call, ~30 personas)"
     status: pending
-  - id: forecast
-    content: Build forecast aggregator producing PH metrics, sentiment, top quotes, UX friction, predicted hot tweets
+  - id: agents-reactions
+    content: "[John] Implement lib/agents/reactions.ts: per-persona reaction LLM call (action + comment text + sentiment + friction points), persona voice baked into prompt"
+    status: pending
+  - id: agents-orchestrator
+    content: "[John] Implement lib/agents/orchestrator.ts: round loop with concurrency semaphore, top-K diffusion into memory, emit each event via onEvent callback"
+    status: pending
+  - id: agents-forecast
+    content: "[John] Implement lib/agents/forecast.ts: cluster sentiment, pick top comments per platform, generate predicted_hot_tweets and narrative summary"
     status: pending
   - id: ui-input
-    content: "Frontend: URL/pitch input page that kicks off a run"
+    content: "[Juno] Polish app/page.tsx (URL input is stubbed — refine copy, add loading state, optional pre-warmed example buttons)"
     status: pending
-  - id: ui-swarm
-    content: "Frontend: live Swarm view with force-graph animation tied to WebSocket events"
-    status: pending
-  - id: ui-feed
-    content: "Frontend: live Feed view (Product Hunt mock) with comments streaming and upvote counter"
+  - id: ui-discourse
+    content: "[Juno] Build the live three-panel view in app/run/[id]/page.tsx + components/: RedditThread, TwitterDiscourse, TikTokComments — animate comments streaming in"
     status: pending
   - id: ui-dashboard
-    content: "Frontend: forecast Dashboard view with persona-segmented analytics"
+    content: "[Juno] Build the forecast dashboard panel: LaunchScoreGauge, ViralityMeter, SentimentBars, TopComments, HotTweets, WeaknessCard, ViralHookCard, UXFrictionList"
     status: pending
   - id: demo-prep
-    content: Pre-warm 2-3 demo URLs (good / confusing / polarizing) and rehearse the 90-second story
+    content: "Pre-warm 2-3 demo URLs (clearly good / confusing / polarizing) and rehearse the 90-second story"
     status: pending
 isProject: false
 ---
 
-# Vibe-Coded App Launch Simulator
+# Vibe App Launch Simulator
 
-## What we're building (the elevator pitch)
+## Pitch
 
-A "MiroFish for vibe-coded apps". User pastes a URL of their newly-built app (Lovable, v0, Cursor, Bolt, etc.). A scout agent **actually browses the site**, extracts what it does and who it's for, then we spin up a **swarm of LLM personas** tailored to that product who:
+> *"We simulated the internet reacting to your launch."*
 
-1. Discover the app on a simulated Product Hunt / Twitter feed
-2. Read its pitch + (optionally) click into the live site
-3. Upvote / skip, post comments, share, or roast it
-4. Influence each other through social signals (social proof, controversy)
+Paste a landing-page URL. We scrape it, generate ~30 internet personas tailored to its audience, run a multi-round discourse simulation where agents react to the page **and to each other**, and show you:
 
-The user watches it unfold **live** (animated swarm, comment feed ticking, upvote counter rising) and gets a **forecast dashboard** at the end: predicted PH rank, sentiment breakdown, top quotes, UX friction list, and viral hot-takes — all segmented by persona type.
+- a **fake Reddit thread** about your launch
+- **simulated Twitter discourse** (replies, quote-tweets, ratios)
+- **fake TikTok comments**
+- a **launch forecast**: score, virality potential, most-likely audience, biggest viral hook, biggest weakness, sentiment breakdown by platform, top quotes, predicted hot tweets
 
-This is differentiated vs. existing work:
-- **MiroFish** ([mirofish.ink](https://mirofish.ink/)) takes text seeds; ours takes a **real running web app** and grounds reactions in what agents actually saw on the page.
-- **LaunchSim, Stunt Double, CBrowser, Flock Synthetics** do persona browsing OR launch simulation; we **fuse both** into a single live-visualized launch day.
-- **Stanford Generative Agents** (Park et al. 2023) gave us the memory + reflection + planning recipe we'll borrow at small scale.
+This is **narrative analysis disguised as forecasting**. The point isn't statistical truth — it's a screenshot-worthy, emotionally believable read on whether your positioning lands.
+
+## Why a landing page is enough
+
+A landing page already contains: positioning, pricing, tone, target audience, visuals, social proof, value proposition, CTA strategy, product maturity, vibes. That's exactly what internet users react to. We don't need to drive a live `browser-use` session through the product itself — the page tells us everything reactions will be based on.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    User[User submits URL plus optional pitch] --> Scout
-    Scout[Scout agent: Playwright plus multimodal LLM] --> ProductCard[(ProductCard JSON: features, audience, copy, screenshots)]
-    ProductCard --> PersonaGen[Persona generator LLM]
-    PersonaGen --> Personas[(N personas with traits, goals, biases)]
-    Personas --> Sim[Simulation engine]
-    ProductCard --> Sim
-    Sim -->|stream events| WS[WebSocket broadcaster]
-    WS --> UI[Live visualization plus dashboard]
-    Sim --> Aggregator[Forecast aggregator]
-    Aggregator --> UI
-
-    subgraph Sim
-        Discover[Discovery tick: agent sees feed item]
-        Browse[Optional live browse: subset of agents use Playwright]
-        React[React tick: vote, comment, share, ignore]
-        Diffuse[Diffusion tick: agents see others reactions]
-        Discover --> Browse --> React --> Diffuse --> Discover
-    end
+    User[User pastes URL] --> API1[POST /api/run]
+    API1 --> Scrape[lib/scrape: Playwright + LLM]
+    Scrape --> Card[(ProductCard JSON)]
+    Card --> PG[lib/agents: persona generator]
+    PG --> Personas[(30 personas across reddit/twitter/tiktok)]
+    Personas --> Sim[lib/agents: orchestrator]
+    Card --> Sim
+    Sim -->|RunEvents| Store[lib/run-store in-memory]
+    Sim --> Aggregator[lib/agents: forecast aggregator]
+    Aggregator --> Store
+    Store -->|SSE| UI[app/run/:id: discourse panels + dashboard]
 ```
 
-## Components
+Per round, the orchestrator: samples idle personas, calls `generateReaction` per persona concurrently (semaphore), feeds the top-K most upvoted/controversial reactions back into every persona's "feed memory" so subsequent rounds drift sentiment based on social proof — this is how the demo gets the *"wait, the sentiment just turned"* moment.
 
-### 1. Scout agent — `backend/scout.py`
-- Use **Playwright** (or `browser-use` Python SDK) to load the URL.
-- Extract: page title, hero copy, primary CTA, screenshots of viewport, list of nav links, top 1–2 internal pages, detected category (landing page, SaaS dashboard, game, tool, etc.).
-- Feed screenshots + DOM text to a multimodal LLM (Claude Sonnet / GPT-4o-class) with a JSON schema prompt → produces a `ProductCard`:
-  ```json
-  { "name": "...", "tagline": "...", "category": "...",
-    "key_features": ["..."], "target_audience": ["..."],
-    "ux_flow": ["..."], "screenshots": ["..."], "vibes": ["..."] }
-  ```
-- Why a single multimodal call vs. full GraphRAG: hackathon scope; one structured extraction is "good enough" and sub-30s.
+## Stack
 
-### 2. Persona generator — `backend/personas.py`
-- Input: `ProductCard`. Output: `N` personas (default 50, configurable to a few hundred).
-- One LLM call asks for a stratified sample tailored to the product's audience (e.g., dev tool → indie hackers, senior devs, PMs, skeptics, hype-bros). Each persona has:
-  - `archetype`, `demographics`, `goals`, `pet_peeves`, `tech_savvy`, `patience`, `risk_tolerance`, `posting_style`, `following_count` (controls social weight).
-- Cheap and fast: single batched generation, ~5–10s for 50 personas.
-
-### 3. Simulation engine — `backend/sim.py`
-- Tick-based loop, ~20 ticks per simulated "launch day". Each tick:
-  1. **Discovery**: each idle persona has a probability of seeing the post in their feed (modulated by current upvote count → social proof).
-  2. **Browse** (subset): for ~5–10% of personas (or persona types flagged "hands-on"), spawn a real `browser-use` session that visits the URL with a goal derived from the persona's needs. The session returns a short experience report (what worked, what confused them).
-  3. **React**: LLM call per persona producing `{action: vote|skip|comment|share, comment_text, sentiment, friction_points[]}`. Prompt includes the persona, the ProductCard, optional browse report, and a window of recent comments (memory).
-  4. **Diffuse**: top-K most upvoted/controversial comments enter every persona's "feed memory" for next tick.
-- **Concurrency**: `asyncio.gather` with a semaphore (e.g., 20 concurrent LLM calls). Use a small/fast model (gpt-5.5-fast, Claude Haiku, Gemini Flash, or whatever the team has credits for) for reaction ticks; keep the multimodal model only for the scout step.
-- **Stream events** over a WebSocket as they happen so the UI animates live.
-
-### 4. Forecast aggregator — `backend/forecast.py`
-- After the run, produce:
-  - Predicted PH metrics: total upvotes, rank band (#1–5 / top 10 / etc.), comment count.
-  - Sentiment distribution per persona segment.
-  - Top 5 "verbatim" comments (highest engagement).
-  - UX friction hot list (clustered from `friction_points` across browse reports).
-  - "What Twitter would say": 3 hot-take tweets generated from controversy clusters.
-- One final LLM call to summarize raw event log → narrative analysis.
-
-### 5. Frontend — `frontend/`
-- **Stack**: Next.js + Tailwind + Framer Motion + `react-force-graph` or `d3-force` for the swarm.
-- **Three views**, switchable:
-  - **Swarm view**: animated nodes (one per persona) clustering around the product, glowing when they upvote, popping a speech bubble when they comment, edges between personas who reply to each other.
-  - **Feed view**: a fake Product Hunt page where comments stream in live, upvote counter ticks up, sorted by hot.
-  - **Dashboard view**: post-run analytics — gauges, persona-segmented sentiment bars, top quotes, friction list, predicted hot tweets.
-- WebSocket client (`/ws/sim/:runId`) drives all three.
-
-## Tech stack recommendation
-
-- **Backend**: Python 3.11, FastAPI, `asyncio`, Playwright, `browser-use` (optional), one LLM SDK (OpenAI / Anthropic), pydantic for schemas.
-- **Frontend**: Next.js 15 (App Router), Tailwind, Framer Motion, `react-force-graph-2d`, `recharts` for the dashboard.
-- **State**: in-memory dict keyed by `runId`; no DB needed for the hackathon.
-- **Deploy**: Vercel for frontend, Render / Fly.io / Railway / a single VM for backend (Playwright needs a real Chromium).
-
-## Hackathon-realistic MVP scope (cut list)
-
-Build in this order; stop when the demo is great:
-1. Scout + ProductCard + Persona generation (no browsing yet, fully simulated reactions). End-to-end "URL in, dashboard out" in ~6 hours.
-2. WebSocket streaming + Swarm visualization (the WOW moment).
-3. Real `browser-use` browsing on 5–10 hands-on personas (grounding + visible "agent video" thumbnails in the UI).
-4. Diffusion / social proof dynamics and final narrative summary.
-5. (Stretch) "Inject a variable" mid-sim like MiroFish (e.g., "Hacker News user X just dunked on it" — see how the swarm reacts).
-
-Explicit cuts vs. MiroFish: no GraphRAG, no thousands of agents (target 50–200), no dual-platform (PH + Twitter share UI surface), no persistent memory across runs.
-
-## Demo storyline (90 seconds)
-
-1. Paste a vibe-coded app URL (have 2–3 pre-warmed: a good one, a confusing one, a polarizing one).
-2. Watch scout open a live Playwright browser thumbnail in the corner — extracts the product card on screen.
-3. 50 persona avatars fly in, labeled. Swarm view: nodes start clustering, glowing green for upvotes, red for skips. Comments stream into the feed view in real time. A controversial comment goes viral — see ripple of replies.
-4. After ~60s, dashboard view: "Predicted: #4 of the day, 387 upvotes, 22 comments, 2 likely hot tweets, 4 critical UX issues" with persona-segmented breakdown and verbatim quotes.
-5. Switch product to the "confusing" pre-warmed app — show how forecast changes (low upvotes, lots of "what does this even do?" comments).
-
-## Key risks / tradeoffs
-
-- **LLM cost & latency**: 50 personas times 20 ticks = 1000 calls. Use a fast cheap model and batch. Budget the demo at ~$1–3 of API spend per run; cap personas to 30 if needed.
-- **Playwright in production**: needs Chromium installed on the host. Use a Docker image or a service like Browserbase if local install is brittle.
-- **Believability of personas**: if all comments sound the same, the demo dies. Mitigation: stratify personas hard, vary `posting_style` (caps, lowercase, emoji-heavy, formal), and seed each prompt with 2–3 example comments in their style.
-- **Validation**: we have no ground truth. Be honest in the UI — call it "forecast", not "prediction", and show confidence bands.
-- **Plagiarism risk**: this is "MiroFish for X". Lean into it in the pitch — different input modality (live web apps), different output (Product Hunt forecast + UX issues), different audience (vibe coders, not analysts).
+- **Next.js 16** (App Router) + **TypeScript** + **Tailwind 4** — single repo, no separate backend
+- **Playwright** — Chromium, self-hosted; run `npm run playwright:install` once after clone
+- **OpenRouter** — single LLM provider, free model by default (Gemini 2.0 Flash exp). Switch via `OPENROUTER_MODEL` env var.
+- **Zod** — schema validation at module boundaries
+- **Server-Sent Events** — `/api/run/:id/stream` pushes `RunEvent`s to the dashboard
+- **In-memory run store** — `Map<runId, Run>`, no DB
 
 ## File layout
 
-- [backend/main.py](backend/main.py) — FastAPI app, `/run` endpoint, `/ws/sim/:runId`
-- [backend/scout.py](backend/scout.py) — Playwright + multimodal extraction
-- [backend/personas.py](backend/personas.py) — persona generator
-- [backend/sim.py](backend/sim.py) — tick loop, event broadcaster
-- [backend/forecast.py](backend/forecast.py) — final aggregation
-- [backend/llm.py](backend/llm.py) — thin LLM client wrapper with concurrency limit
-- [frontend/app/page.tsx](frontend/app/page.tsx) — URL input + run launcher
-- [frontend/app/run/[id]/page.tsx](frontend/app/run/%5Bid%5D/page.tsx) — three-view simulation UI
-- [frontend/components/SwarmView.tsx](frontend/components/SwarmView.tsx)
-- [frontend/components/FeedView.tsx](frontend/components/FeedView.tsx)
-- [frontend/components/Dashboard.tsx](frontend/components/Dashboard.tsx)
-- [README.md](README.md) — pitch + run instructions
+```
+app/
+  page.tsx                         URL input (stubbed)
+  run/[id]/page.tsx                Live discourse + dashboard view (Juno)
+  api/scrape/route.ts              POST /api/scrape — isolated scrape endpoint (Ken)
+  api/run/route.ts                 POST /api/run — kicks off scrape + sim
+  api/run/[id]/route.ts            GET — run snapshot
+  api/run/[id]/stream/route.ts     GET — SSE event stream
+
+lib/
+  shared/types.ts                  Zod schemas + types: ProductCard, Persona, Reaction, Forecast, RunEvent
+  scrape/                          Owner: Ken
+    index.ts                         scrapeProductCard(url) entry
+    playwright.ts                    capturePage helpers
+    extract.ts                       LLM extraction step
+    README.md
+  agents/                          Owner: John
+    index.ts                         runSimulation entry
+    archetypes.ts                    predefined internet archetypes
+    personas.ts                      persona generator
+    reactions.ts                     per-persona reaction LLM call
+    orchestrator.ts                  round loop + diffusion
+    forecast.ts                      final aggregation
+    README.md
+  llm/openrouter.ts                Thin OpenRouter client (chat + chatJSON)
+  run-store.ts                     In-memory Run map + emit/subscribe
+
+components/                       Owner: Juno
+  README.md                        (panels live here: RedditThread, TwitterDiscourse, TikTokComments, LaunchScoreGauge, ...)
+```
+
+## Team & ownership
+
+The three modules talk **only** through the JSON contracts in `lib/shared/types.ts`. Ownership is strict — keep changes within your module so the three of you can work in parallel without merge conflicts.
+
+### Ken — Scraping → ProductCard JSON
+
+**Lives in:** `lib/scrape/*`, `app/api/scrape/route.ts`
+**Reads from `lib/shared/types.ts`:** `ProductCard`, `ProductCardSchema`
+**Outputs:** a validated `ProductCard` from any landing-page URL.
+
+Tasks:
+1. Implement `capturePage(url)` in `playwright.ts` — Chromium, `networkidle`, full-page screenshot (base64), trimmed text content, nav links, og:* metadata.
+2. Implement `extractProductCard(capture)` in `extract.ts` — feed the text + screenshot to OpenRouter (`lib/llm/openrouter.ts`'s `chatJSON`) with a system prompt that asks for strict JSON matching `ProductCardSchema`. Validate before returning.
+3. Test `POST /api/scrape` against 3 real URLs: a clean SaaS landing, a confusing/jargon-heavy one, a polarizing one. Confirm fields populate.
+4. Edge case: if Playwright is blocked (CF challenge, etc.), return a partial ProductCard with `risk_factors: ["scraper_blocked"]` rather than throwing.
+
+### John — Personas + simulation orchestration
+
+**Lives in:** `lib/agents/*`
+**Reads from `lib/shared/types.ts`:** `Persona`, `Reaction`, `Forecast`, `RunEvent`, `ProductCard`
+**Outputs:** stream of `RunEvent`s via the `onEvent` callback, plus a final `Forecast`.
+
+Tasks:
+1. Flesh out `archetypes.ts` (5 starter archetypes are stubbed; add 5–10 more — niche dev Twitter, design Twitter, Hacker News dunker, productivity TikTok, indie founder Reddit, etc.).
+2. Implement `generatePersonas(product, count=30)` — single batched LLM call, stratified across platforms and archetypes.
+3. Implement `generateReaction(persona, product, memory, round)` — short comment in persona voice, sentiment, friction points. Memory is the top-K reactions from the previous round.
+4. Implement `orchestrateRound(...)` — sample subset, run reactions concurrently with a semaphore (~10 in flight), emit each `Reaction` event through `onEvent` as it lands.
+5. Implement `aggregateForecast(...)` — sentiment clustering, top quotes per platform, hot-tweet generation, narrative summary in one LLM call.
+6. Wire it all together in `runSimulation` (already stubbed in `index.ts`).
+
+### Juno — Dashboard & live UI
+
+**Lives in:** `app/page.tsx`, `app/run/[id]/page.tsx`, `components/*`
+**Reads from `lib/shared/types.ts`:** `RunEvent`, `Forecast`, `ProductCard`, `Persona`, `Reaction`
+**Inputs:** `EventSource('/api/run/:id/stream')` events + `GET /api/run/:id` snapshot.
+
+Tasks:
+1. Polish the URL input page (`app/page.tsx`) — copy refinement, optional pre-warmed example buttons (good / confusing / polarizing demo URLs).
+2. Build the **live discourse view** in `app/run/[id]/page.tsx` + `components/`:
+   - `RedditThread.tsx` — fake subreddit, upvote counter ticking, threaded replies. Filter `events` where `platform === "reddit"`.
+   - `TwitterDiscourse.tsx` — fake X timeline, retweets and quote-tweets visible. Filter `platform === "twitter"`.
+   - `TikTokComments.tsx` — fake comment column, hearts, reply chains. Filter `platform === "tiktok"`.
+   - Animate comments easing in as they stream — Framer Motion is fine. Stagger so the eye can follow.
+3. Build the **forecast dashboard** that swaps in when the `forecast` event arrives:
+   - `LaunchScoreGauge.tsx` (0–100), `ViralityMeter.tsx`
+   - `SentimentBars.tsx` — per-platform breakdown
+   - `TopComments.tsx` — verbatim, screenshot-worthy
+   - `HotTweets.tsx` — predicted breakout tweets
+   - `WeaknessCard.tsx`, `ViralHookCard.tsx`, `UXFrictionList.tsx`
+4. **Make the panels look real enough to screenshot and share.** This is the viral surface — nail the platform aesthetic (Reddit's beige, X's dark, TikTok's right-rail).
+
+## Local setup
+
+```bash
+npm install
+npm run playwright:install        # once: downloads Chromium
+cp .env.example .env.local         # add OPENROUTER_API_KEY
+npm run dev
+```
+
+Open http://localhost:3000.
+
+## MVP cut list (ship in this order)
+
+1. **Vertical slice with stubs**: scrape a single hardcoded URL → fixed personas → fixed reactions → render. Proves the pipe end-to-end.
+2. **Real scraping** (Ken) — first piece that adds magic; the ProductCard makes everything downstream feel custom.
+3. **Real personas + reactions** (John) — second magic moment; comments start sounding distinct.
+4. **Real-time SSE animation** (Juno) — the WOW; comments stream in live.
+5. **Forecast dashboard** (Juno + John) — ties the bow.
+6. **Stretch**: pre-warmed demos, "inject a variable" mid-sim (e.g., "HN dunker arrives"), screenshot/share button on the discourse panels.
+
+## Risks / tradeoffs
+
+- **Free model quality**: free OpenRouter models occasionally return ill-formed JSON. `chatJSON` strips code fences but stronger validation may need retries. If quality wobbles, switch `OPENROUTER_MODEL` to a paid Haiku/Flash tier.
+- **Playwright on hosted infra**: Vercel doesn't run Chromium. For deploy, target Render/Fly/Railway, or use `@sparticuz/chromium` + Playwright-aws-lambda. For the demo, local is fine.
+- **Persona uniformity**: if all comments sound the same, the demo dies. Stratify hard, vary `posting_style` per persona, seed each prompt with 2–3 in-style examples.
+- **Believability vs. truth**: Be honest in the UI — call it *"forecast"* / *"simulated discourse"*, not *"prediction"*. The whole pitch is that this is narrative analysis.
+- **Differentiation from MiroFish**: ours takes a real running web app (not text seeds), outputs a Product-Hunt/Twitter/TikTok forecast (not abstract analytics), aimed at vibe coders. Lean into the framing in the pitch.
+
+## Demo storyline (90 seconds)
+
+1. Paste a vibe-coded app URL (have 2–3 pre-warmed: a clear winner, a confusing one, a polarizing one).
+2. The page transitions to the live view. Status ticks: "Scraping…" → ProductCard appears in the corner.
+3. 30 persona avatars spawn into the three panels. Comments start streaming in — Reddit first (skeptical), then Twitter (hot takes), then TikTok (vibes).
+4. A controversial reply hits the top of the Reddit panel. Watch follow-up comments shift tone in response.
+5. After ~60s, dashboard slides in: "Launch score: 72. Virality: 64%. Biggest viral hook: time-saving demo. Biggest weakness: positioning reads generic. 4 critical UX issues."
+6. Switch to the "confusing" pre-warmed app — show how the forecast inverts (low score, lots of "what does this even do?" comments).
